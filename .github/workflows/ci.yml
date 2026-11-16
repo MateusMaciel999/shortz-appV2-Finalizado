@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Build, lint, testes e segurança
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node.js (com cache de dependências)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências (build)
+        run: npm ci
+
+      - name: Lint (verificação de sintaxe dos arquivos JS)
+        run: find . -name '*.js' -not -path './node_modules/*' -print0 | xargs -0 -n1 node --check
+
+      - name: Testes automatizados
+        run: npm test
+
+      - name: SCA - npm audit (falha se houver vulnerabilidade alta/crítica)
+        run: npm audit --audit-level=high
+
+      - name: Build da imagem Docker (sem publicar)
+        run: docker build -t shortz-app:ci .

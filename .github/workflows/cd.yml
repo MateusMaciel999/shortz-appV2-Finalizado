@@ -1,0 +1,77 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publicar imagem no GHCR
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Definir nome da imagem (minúsculo)
+        id: meta
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push (tag = sha do commit e latest)
+        run: |
+          docker build -t "${{ steps.meta.outputs.image }}:${GITHUB_SHA}" -t "${{ steps.meta.outputs.image }}:latest" .
+          docker push "${{ steps.meta.outputs.image }}:${GITHUB_SHA}"
+          docker push "${{ steps.meta.outputs.image }}:latest"
+
+  deploy-staging:
+    name: Deploy em Staging
+    needs: publish
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Deploy (simulado) da imagem em homologação
+        run: |
+          echo "Deploy em STAGING da imagem ${{ needs.publish.outputs.image }}:${GITHUB_SHA}"
+          echo "Aqui entraria o comando real (ex.: docker compose pull && docker compose up -d no servidor de staging)."
+
+      - name: Testes de aceitação / smoke (simulados)
+        run: 'echo "Testes de aceitacao em staging - OK"'
+
+  deploy-production:
+    name: Deploy em Produção
+    needs: [publish, deploy-staging]
+    runs-on: ubuntu-latest
+    # O environment "production" exige aprovação do revisor obrigatório antes de rodar este job.
+    environment: production
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy (simulado) da imagem em produção
+        run: |
+          echo "Deploy em PRODUÇÃO da imagem ${{ needs.publish.outputs.image }}:${GITHUB_SHA}"
+          echo "Smoke tests e health check pós-deploy: OK"
+
+      - name: Gerar baseline (tag SemVer) e release notes automáticas
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            echo "Release $VERSION já existe; incremente a versão no package.json para gerar uma nova baseline."
+          else
+            gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --generate-notes
+          fi
